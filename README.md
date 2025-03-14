@@ -14,7 +14,7 @@ Usage
 =====
 
 ```
-noip-duc 3.0.0
+noip-duc 3.3.0
 No-IP Dynamic Update Client
 
 USAGE:
@@ -50,7 +50,7 @@ OPTIONS:
             CURRENT_IP and LAST_IP set. Also, {{CURRENT_IP}} and {{LAST_IP}} are replaced with the
             respective values. This allows you to provide the variables as arguments to your command
             or read them from the environment. The command is always executed in a shell, sh or cmd
-            on windows.
+            on Windows.
 
             Example
 
@@ -59,8 +59,7 @@ OPTIONS:
             [env: NOIP_EXEC_ON_CHANGE=]
 
     -g, --hostnames <HOSTNAMES>
-            Comma separated list of groups and hostnames to update. This may be empty when using
-            group credentials and updating all hosts in the group
+            Comma separated list of groups and hostnames to update
 
             [env: NOIP_HOSTNAMES=]
 
@@ -79,7 +78,8 @@ OPTIONS:
             [default: /etc/no-ip2.conf]
 
         --ip-method <IP_METHOD>
-            Methods used to discover public IP as a comma separated list. They are tried in order
+            Methods used to discover the public IP, as a comma separated list. They are tried in
+            order
             until a public IP is found. Failed methods are not retried unless all methods fail.
 
             Possible values are
@@ -87,7 +87,7 @@ OPTIONS:
                               associated with your instance.
             - 'dns': Use No-IP's DNS public IP lookup system.
             - 'dns:<nameserver>:<port>:<qname>:<record type>': custom DNS lookup.
-            - 'http': No-IP's HTTP method (the default).
+            - 'http': No-IP's HTTP method on port 80.
             - 'http-port-8245': No-IP's HTTP method on port 8245.
             - 'static:<ip address>': always use this IP address. Helpful with --once.
             - HTTP URL: An HTTP URL that returns only an IP address.

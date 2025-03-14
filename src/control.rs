@@ -5,22 +5,23 @@ use std::time::Duration;
 pub enum Control {
     UpdateNow,
     NotifyNextCheck,
+    Quit,
 }
 
-pub trait ControlChannel {
+pub trait Controller {
     fn recv_timeout(&self, timeout: Duration) -> Option<Control>;
 }
 
-pub struct SleepOnlyControl;
+pub struct SleepOnlyController;
 
-impl ControlChannel for SleepOnlyControl {
+impl Controller for SleepOnlyController {
     fn recv_timeout(&self, timeout: Duration) -> Option<Control> {
         thread::sleep(timeout);
         Some(Control::UpdateNow)
     }
 }
 
-impl ControlChannel for mpsc::Receiver<Control> {
+impl Controller for mpsc::Receiver<Control> {
     fn recv_timeout(&self, timeout: Duration) -> Option<Control> {
         self.recv_timeout(timeout).ok()
     }

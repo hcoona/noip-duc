@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use log::{debug, info};
+use log::debug;
 
-use noip_duc::{noip2, public_ip::IpMethods, updater, NotificationLogger, SleepOnlyControl};
+use noip_duc::{noip2, public_ip::IpMethods, updater, NotificationLogger, SleepOnlyController};
 
 // This is used to handle --import since the `exclusive` and `conflicts_with` options don't seem to
 // work in clap 3.0.0-beta.5. Perhaps they will work in the future or when it goes stable. This
@@ -28,8 +28,7 @@ struct Config {
     #[clap(short, long, env = "NOIP_PASSWORD")]
     password: String,
 
-    /// Comma separated list of groups and hostnames to update. This may be empty when using group
-    /// credentials and updating all hosts in the group.
+    /// Comma separated list of groups and hostnames to update.
     // use std::vec::Vec to avoid Clap magic
     #[clap(short = 'g', long, env = "NOIP_HOSTNAMES", parse(try_from_str = parse_hostnames))]
     hostnames: Option<std::vec::Vec<String>>,
@@ -42,18 +41,22 @@ struct Config {
     #[clap(long, env = "NOIP_HTTP_TIMEOUT", default_value = "10s", parse(try_from_str = humantime::parse_duration))]
     http_timeout: Duration,
 
+    #[cfg(target_family = "unix")]
     /// Fork into the background
     #[clap(long)]
     daemonize: bool,
 
+    #[cfg(target_family = "unix")]
     /// When daemonizing, become this user.
     #[clap(long, env = "NOIP_DAEMON_USER")]
     daemon_user: Option<String>,
 
+    #[cfg(target_family = "unix")]
     /// When daemonizing, become this group.
     #[clap(long, env = "NOIP_DAEMON_GROUP")]
     daemon_group: Option<String>,
 
+    #[cfg(target_family = "unix")]
     /// When daemonizing, write process id to this file.
     #[clap(long, env = "NOIP_DAEMON_PID_FILE", parse(from_os_str))]
     daemon_pid_file: Option<PathBuf>,
@@ -70,7 +73,7 @@ struct Config {
     /// CURRENT_IP and LAST_IP set. Also, {{CURRENT_IP}} and {{LAST_IP}} are replaced with the
     /// respective values. This allows you to provide the variables as arguments to your command or
     /// read them from the environment. The command is always executed in a shell, sh or cmd on
-    /// windows.
+    /// Windows.
     ///
     /// Example
     ///
@@ -78,7 +81,7 @@ struct Config {
     #[clap(short = 'e', long, env = "NOIP_EXEC_ON_CHANGE")]
     exec_on_change: Option<String>,
 
-    /// Methods used to discover public IP as a comma separated list. They are tried in order
+    /// Methods used to discover the public IP, as a comma separated list. They are tried in order
     /// until a public IP is found. Failed methods are not retried unless all methods fail.
     ///
     /// Possible values are
@@ -86,7 +89,7 @@ struct Config {
     ///                   associated with your instance.
     /// - 'dns': Use No-IP's DNS public IP lookup system.
     /// - 'dns:<nameserver>:<port>:<qname>:<record type>': custom DNS lookup.
-    /// - 'http': No-IP's HTTP method (the default).
+    /// - 'http': No-IP's HTTP method on port 80.
     /// - 'http-port-8245': No-IP's HTTP method on port 8245.
     /// - 'static:<ip address>': always use this IP address. Helpful with --once.
     /// - HTTP URL: An HTTP URL that returns only an IP address.
@@ -245,25 +248,27 @@ fn main() -> anyhow::Result<()> {
         _ => &LogLevel::Trace,
     });
 
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(log_level.to_string()),
+    )
+    .init();
+
+    #[cfg(target_family = "unix")]
     if config.daemonize {
-        // TODO: set up logging to a file
-        env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or(log_level.to_string()),
-        )
-        .init();
         daemonize(&config)?;
-    } else {
-        env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or(log_level.to_string()),
-        )
-        .init();
     }
 
     debug!("{:?}", config);
 
-    updater((&config).into(), NotificationLogger {}, SleepOnlyControl {}).map_err(Into::into)
+    updater(
+        (&config).into(),
+        NotificationLogger {},
+        SleepOnlyController {},
+    )
+    .map_err(Into::into)
 }
 
+#[cfg(target_family = "unix")]
 fn daemonize(c: &Config) -> Result<()> {
     use daemonize::Daemonize;
 
@@ -289,7 +294,7 @@ fn daemonize(c: &Config) -> Result<()> {
 
     daemonize.start()?;
 
-    info!("running in background");
+    log::info!("running in background");
 
     Ok(())
 }

@@ -1,5 +1,15 @@
 ### [Unreleased]
 
+### [3.3.0] - 2024-09-16
+
+- Change: Rename ControlChannel to Controller, SleepOnlyControl to SleepOnlyController.
+- New: Control::Quit message, Notification::Quitting to cleanly exit the updater
+- New: Derive Clone for Notification
+- Change: Rust 1.81.0
+- Change: Update dependencies
+- Change: Only provide "daemonize" for unix targets
+- Change: improve help
+
 ### [3.2.0] - 2024-07-10
 
 - Fix: properly parse hostnames with round-robin @label

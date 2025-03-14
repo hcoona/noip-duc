@@ -37,7 +37,7 @@ pub struct Config<'a> {
 pub fn updater(
     c: Config,
     observer: impl Observer + Clone,
-    control: impl ControlChannel,
+    control: impl Controller,
 ) -> Result<(), UpdateError> {
     let mut last_ip: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
     let mut retries = 0u8;
@@ -109,7 +109,10 @@ pub fn updater(
                 Some(Control::NotifyNextCheck) => {
                     observer.notify(Notification::NextCheck(dur - start.elapsed()));
                 }
-                None => return Ok(()),
+                Some(Control::Quit) | None => {
+                    observer.notify(Notification::Quitting);
+                    return Ok(());
+                }
             }
         }
     }

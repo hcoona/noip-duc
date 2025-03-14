@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::UpdateError;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Notification {
     Error(String),
 
@@ -34,6 +34,8 @@ pub enum Notification {
     },
 
     GetIpFailedWillRetry(String, u8, Duration),
+
+    Quitting,
 }
 
 pub trait Observer {
@@ -92,6 +94,9 @@ impl Observer for NotificationLogger {
                     humantime::format_duration(next_try),
                     error
                 )
+            }
+            Notification::Quitting => {
+                info!("stopping updates and exiting")
             }
         }
     }
