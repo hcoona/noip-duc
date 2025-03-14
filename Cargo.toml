@@ -1,6 +1,6 @@
 [package]
 name = "noip-duc"
-version = "3.1.0"
+version = "3.1.1"
 authors = ["No-IP Team <support@noip.com>"]
 description = "No-IP Dynamic Update Client (https://www.noip.com)"
 license = "Apache-2.0"
@@ -43,6 +43,5 @@ panic = 'abort'
 section = "net"
 maintainer-scripts = "debian/"
 systemd-units = { enable = false }
+depends = ""
 revision = ""
-
-

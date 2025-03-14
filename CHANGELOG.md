@@ -1,5 +1,11 @@
 ### [Unreleased]
 
+### [3.1.1] - 2024-04-10
+
+- Change: Update dependencies, handle adviory https://rustsec.org/advisories/RUSTSEC-2024-0019 in mio
+- New: gnu arm64/aarch64 deb package
+- Change: Rust 1.77.2
+
 ### [3.1.0] - 2024-02-09
 
 - New: Set CURRENT_IP and LAST_IP environment variables when running exec_on_change command
