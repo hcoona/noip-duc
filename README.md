@@ -14,6 +14,7 @@ Usage
 =====
 
 ```
+noip-duc 3.0.0
 No-IP Dynamic Update Client
 
 USAGE:
@@ -22,37 +23,45 @@ USAGE:
 OPTIONS:
         --check-interval <CHECK_INTERVAL>
             How often to check for a new IP address. Minimum: every 2 minutes
-            
+
             [env: NOIP_CHECK_INTERVAL=]
             [default: 5m]
 
         --daemon-group <DAEMON_GROUP>
             When daemonizing, become this group
-            
+
             [env: NOIP_DAEMON_GROUP=]
 
         --daemon-pid-file <DAEMON_PID_FILE>
             When daemonizing, write process id to this file
-            
+
             [env: NOIP_DAEMON_PID_FILE=]
 
         --daemon-user <DAEMON_USER>
             When daemonizing, become this user
-            
+
             [env: NOIP_DAEMON_USER=]
 
         --daemonize
             Fork into the background
 
     -e, --exec-on-change <EXEC_ON_CHANGE>
-            Command to run when IP address changes
-            
+            Command to run when the IP address changes. It is run with the environment variables
+            CURRENT_IP and LAST_IP set. Also, {{CURRENT_IP}} and {{LAST_IP}} are replaced with the
+            respective values. This allows you to provide the variables as arguments to your command
+            or read them from the environment. The command is always executed in a shell, sh or cmd
+            on windows.
+
+            Example
+
+            noip_duc -e 'mail -s "IP changed to {{CURRENT_IP}} from {{LAST_IP}}" user@example.com'
+
             [env: NOIP_EXEC_ON_CHANGE=]
 
     -g, --hostnames <HOSTNAMES>
             Comma separated list of groups and hostnames to update. This may be empty when using
             group credentials and updating all hosts in the group
-            
+
             [env: NOIP_HOSTNAMES=]
 
     -h, --help
@@ -60,19 +69,19 @@ OPTIONS:
 
         --http-timeout <HTTP_TIMEOUT>
             Timeout when making HTTP requests
-            
+
             [env: NOIP_HTTP_TIMEOUT=]
             [default: 10s]
 
         --import [<IMPORT>]
             Import config from noip2 and display it as environment variables
-            
+
             [default: /etc/no-ip2.conf]
 
         --ip-method <IP_METHOD>
             Methods used to discover public IP as a comma separated list. They are tried in order
             until a public IP is found. Failed methods are not retried unless all methods fail.
-            
+
             Possible values are
             - 'aws-metadata': uses the AWS metadata URL to get the Elastic IP
                               associated with your instance.
@@ -82,14 +91,14 @@ OPTIONS:
             - 'http-port-8245': No-IP's HTTP method on port 8245.
             - 'static:<ip address>': always use this IP address. Helpful with --once.
             - HTTP URL: An HTTP URL that returns only an IP address.
-            
+
             [env: NOIP_IP_METHOD=]
             [default: dns,http,http-port-8245]
 
     -l, --log-level <LOG_LEVEL>
             Set the log level. Possible values: trace, debug, info, warn, error, critical. Overrides
             --verbose
-            
+
             [env: NOIP_LOG_LEVEL=]
 
         --once
@@ -99,13 +108,13 @@ OPTIONS:
     -p, --password <PASSWORD>
             Your www.noip.com password. For better security, use Update Group credentials.
             https://www.noip.com/members/dns/dyn-groups.php
-            
+
             [env: NOIP_PASSWORD=]
 
     -u, --username <USERNAME>
             Your www.noip.com username. For better security, use Update Group credentials.
             https://www.noip.com/members/dns/dyn-groups.php
-            
+
             [env: NOIP_USERNAME=]
 
     -v, --verbose

@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::{thread, time::Duration};
 
@@ -81,9 +81,17 @@ struct Config {
     #[clap(short, long, env = "NOIP_LOG_LEVEL")]
     log_level: Option<LogLevel>,
 
-    /// Command to run when IP address changes.
-    #[clap(short = 'e', long, env = "NOIP_EXEC_ON_CHANGE", parse(from_os_str))]
-    exec_on_change: Option<PathBuf>,
+    /// Command to run when the IP address changes. It is run with the environment variables
+    /// CURRENT_IP and LAST_IP set. Also, {{CURRENT_IP}} and {{LAST_IP}} are replaced with the
+    /// respective values. This allows you to provide the variables as arguments to your command or
+    /// read them from the environment. The command is always executed in a shell, sh or cmd on
+    /// windows.
+    ///
+    /// Example
+    ///
+    ///   noip_duc -e 'mail -s "IP changed to {{CURRENT_IP}} from {{LAST_IP}}" user@example.com'
+    #[clap(short = 'e', long, env = "NOIP_EXEC_ON_CHANGE")]
+    exec_on_change: Option<String>,
 
     /// Methods used to discover public IP as a comma separated list. They are tried in order
     /// until a public IP is found. Failed methods are not retried unless all methods fail.
@@ -292,15 +300,16 @@ fn updater(c: &Config) -> Result<()> {
             ) {
                 Ok(changed) => {
                     info!("update succeeded; ip={}, changed={}", ip, changed);
+
+                    if changed {
+                        if let Some(ref cmd_tmpl) = c.exec_on_change {
+                            exec_command(cmd_tmpl, ip.to_string(), last_ip.to_string());
+                        }
+                    }
+
                     last_ip = ip;
                     retries = 0;
                     last_error = None;
-
-                    if changed {
-                        if let Some(cmd) = &c.exec_on_change {
-                            exec_command(cmd.as_path());
-                        }
-                    }
                 }
                 Err(e) => {
                     error!("update failed; {}", e);
@@ -330,26 +339,45 @@ fn updater(c: &Config) -> Result<()> {
     }
 }
 
-fn exec_command(cmd: &Path) {
+fn exec_command(cmd_tmpl: &str, ip: impl AsRef<str>, last_ip: impl AsRef<str>) {
     use std::str::from_utf8;
 
-    let s = cmd.to_string_lossy();
+    fn shell() -> Command {
+        if cfg!(target_os = "windows") {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C");
+            cmd
+        } else {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c");
+            cmd
+        }
+    }
 
-    debug!("running command; exec_on_change={}", s);
+    let cmd = cmd_tmpl
+        .replace("{{CURRENT_IP}}", ip.as_ref())
+        .replace("{{LAST_IP}}", last_ip.as_ref());
 
-    match Command::new(&cmd).output() {
+    debug!("running command; exec_on_change={cmd}");
+
+    match shell()
+        .arg(&cmd)
+        .env("CURRENT_IP", ip.as_ref())
+        .env("LAST_IP", last_ip.as_ref())
+        .output()
+    {
         Ok(output) => {
             if output.status.success() {
                 info!(
                     "command success for `{}`; stdout={}, stderr={}",
-                    s,
+                    &cmd,
                     from_utf8(&output.stdout).unwrap_or(""),
                     from_utf8(&output.stderr).unwrap_or("")
                 );
             } else {
                 error!(
                     "command failed for `{}`; exit={}, stdout={}, stderr={}'",
-                    s,
+                    &cmd,
                     output.status.code().unwrap_or(-1),
                     from_utf8(&output.stdout).unwrap_or(""),
                     from_utf8(&output.stderr).unwrap_or("")
@@ -357,7 +385,7 @@ fn exec_command(cmd: &Path) {
             }
         }
         Err(e) => {
-            error!("failed to execute cmd `{}`; {:?}", s, e);
+            error!("failed to execute cmd `{cmd}`; {e:?}");
         }
     }
 }

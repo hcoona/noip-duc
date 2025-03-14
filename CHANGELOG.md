@@ -1,5 +1,12 @@
 ### [Unreleased]
 
+### [3.1.0] - 2024-02-09
+
+- New: Set CURRENT_IP and LAST_IP environment variables when running exec_on_change command
+- New: Replace {{CURRENT_IP}} and {{LAST_IP}} in command string when running exec_on_change command
+- Change: Update dependencies including env_logger
+- Change: Rust 1.76.0
+
 ### [3.0.0] - 2023-09-20
 
 - Change: Rust 1.72.1
