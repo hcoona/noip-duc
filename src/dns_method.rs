@@ -3,9 +3,7 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
-use anyhow::Context;
-use anyhow::Result;
-use log::info;
+use log::debug;
 use trust_dns_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use trust_dns_resolver::proto::rr::rdata::txt::TXT;
 use trust_dns_resolver::Resolver;
@@ -13,10 +11,38 @@ use trust_dns_resolver::Resolver;
 const IPCAST1: &str = "ipcast1.dynupdate.no-ip.com:8253";
 const IPCAST2: &str = "ipcast2.dynupdate.no-ip.com:8253";
 
-pub fn resolve(name: &str) -> anyhow::Result<SocketAddr> {
-    name.to_socket_addrs()?
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Failed to use system to resolve IP for {0}; {1}")]
+    SystemResolve(String, Cow<'static, str>),
+
+    #[error("Failed to parse DNS method spec; expected 4 parts received {0}")]
+    Parse(usize),
+
+    #[error("Record type '{0}' is unknown")]
+    UnknownRecordType(String),
+
+    #[error("No answers in DNS response")]
+    NoDnsAnswers,
+
+    #[error("No answers that appeared to be IP addresses in DNS response")]
+    NoIpInTxtAnswers,
+
+    #[error("Failed to resolve; {0}")]
+    TrustResolveError(#[from] trust_dns_resolver::error::ResolveError),
+
+    #[error("Failed to create dns method with {0} as resolver; possibly no internet connection")]
+    NsLookup(Cow<'static, str>),
+
+    #[error("Failed to create resolver; {0}")]
+    CreateResolver(String),
+}
+
+pub fn resolve(name: &str) -> Result<SocketAddr, Error> {
+    name.to_socket_addrs()
+        .map_err(|e| Error::SystemResolve(name.to_owned(), format!("{e}").into()))?
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Failed to use system to lookup IP for {}", name))
+        .ok_or_else(|| Error::SystemResolve(name.to_owned(), "no addresses".into()))
 }
 
 pub struct DnsMethod {
@@ -40,7 +66,7 @@ impl fmt::Debug for DnsMethod {
 }
 
 impl std::str::FromStr for DnsMethod {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     /**
      * <nameserver>:<port>:<qname>:<record type>
@@ -48,17 +74,14 @@ impl std::str::FromStr for DnsMethod {
     fn from_str(spec: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = spec.split(':').collect();
         if parts.len() != 4 {
-            return Err(anyhow::anyhow!(
-                "Failed to parse DNS method spec; expected 4 parts received {}",
-                parts.len()
-            ));
+            return Err(Error::Parse(parts.len()));
         }
 
         Ok(Self {
             description: spec.to_owned(),
             resolver: ResolverFactory::from_host_and_port(
                 spec[0..=(parts[0].len() + parts[1].len())].to_owned(),
-            )?,
+            ),
             qname: parts[2].into(),
             record_type: parts[3].parse()?,
         })
@@ -66,20 +89,20 @@ impl std::str::FromStr for DnsMethod {
 }
 
 impl std::str::FromStr for RecordType {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_uppercase().as_str() {
             "A" => Ok(Self::A),
             "AAAA" => Ok(Self::AAAA),
             "TXT" => Ok(Self::TXT),
-            _ => Err(anyhow::anyhow!("Unknown record type")),
+            _ => Err(Error::UnknownRecordType(s.to_owned())),
         }
     }
 }
 
 impl DnsMethod {
-    pub fn ipcast() -> Result<Self> {
+    pub fn ipcast() -> Result<Self, Error> {
         Ok(Self {
             description: "No-IP Anycast DNS Tools".to_owned(),
             resolver: ResolverFactory::for_ipcast()?,
@@ -88,7 +111,7 @@ impl DnsMethod {
         })
     }
 
-    pub fn get_ip(&self) -> Result<IpAddr> {
+    pub fn get_ip(&self) -> Result<IpAddr, Error> {
         match self.record_type {
             RecordType::A => self.get_ip_a(),
             RecordType::AAAA => self.get_ip_aaaa(),
@@ -96,36 +119,29 @@ impl DnsMethod {
         }
     }
 
-    fn get_ip_a(&self) -> Result<IpAddr> {
+    fn get_ip_a(&self) -> Result<IpAddr, Error> {
         let response = self.get_resolver()?.ipv4_lookup(self.qname.as_str())?;
         Ok(IpAddr::V4(
-            response
-                .iter()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("No answers in DNS response"))?
-                .0,
+            response.iter().next().ok_or(Error::NoDnsAnswers)?.0,
         ))
     }
 
-    fn get_ip_aaaa(&self) -> Result<IpAddr> {
+    fn get_ip_aaaa(&self) -> Result<IpAddr, Error> {
         let response = self.get_resolver()?.ipv6_lookup(self.qname.as_str())?;
         Ok(IpAddr::V6(
-            response
-                .iter()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("No answers in DNS response"))?
-                .0,
+            response.iter().next().ok_or(Error::NoDnsAnswers)?.0,
         ))
     }
 
-    fn get_ip_txt(&self) -> Result<IpAddr> {
+    fn get_ip_txt(&self) -> Result<IpAddr, Error> {
         let response = self.get_resolver()?.txt_lookup(self.qname.as_str())?;
-        response.iter().find_map(parse_txt).ok_or_else(|| {
-            anyhow::anyhow!("No answers that appeared to be IP addresses in DNS response")
-        })
+        response
+            .iter()
+            .find_map(parse_txt)
+            .ok_or(Error::NoIpInTxtAnswers)
     }
 
-    fn get_resolver(&self) -> Result<Resolver> {
+    fn get_resolver(&self) -> Result<Resolver, Error> {
         self.resolver.build()
     }
 }
@@ -135,9 +151,9 @@ fn parse_txt(txt: &TXT) -> Option<IpAddr> {
         match std::str::from_utf8(v) {
             Ok(s) => match s.parse() {
                 Ok(ip) => return Some(ip),
-                Err(_) => info!("txt rdata does not look like IP address; rdata={}", s),
+                Err(_) => debug!("txt rdata does not look like IP address; rdata={}", s),
             },
-            Err(e) => info!("failed to parse txt data as utf8; {}", e),
+            Err(e) => debug!("failed to parse txt data as utf8; {}", e),
         }
     }
 
@@ -154,16 +170,12 @@ impl ResolverFactory {
         Self { nameservers, opts }
     }
 
-    fn build(&self) -> Result<Resolver> {
+    fn build(&self) -> Result<Resolver, Error> {
         let mut config = ResolverConfig::new();
 
         for ns in &self.nameservers {
             config.add_name_server(NameServerConfig {
-                socket_addr: resolve(ns.as_ref()).with_context(||
-                    format!(
-                    "Failed to create dns method with {} as resolver; possibly no internet connection",
-                    &ns)
-                )?,
+                socket_addr: resolve(ns.as_ref()).map_err(|_| Error::NsLookup(ns.clone()))?,
                 protocol: Protocol::Udp,
                 tls_dns_name: None,
                 trust_negative_responses: true,
@@ -171,10 +183,10 @@ impl ResolverFactory {
             })
         }
 
-        Resolver::new(config, self.opts.clone()).map_err(Into::into)
+        Resolver::new(config, self.opts).map_err(|e| Error::CreateResolver(format!("{e}")))
     }
 
-    fn for_ipcast() -> Result<Self> {
+    fn for_ipcast() -> Result<Self, Error> {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(5);
         opts.use_hosts_file = false;
@@ -183,11 +195,11 @@ impl ResolverFactory {
         Ok(Self::new(vec![IPCAST1.into(), IPCAST2.into()], opts))
     }
 
-    fn from_host_and_port(host_and_port: String) -> Result<Self> {
+    fn from_host_and_port(host_and_port: String) -> Self {
         let mut opts = ResolverOpts::default();
         opts.use_hosts_file = false;
         opts.attempts = 1;
 
-        Ok(Self::new(vec![host_and_port.into()], opts))
+        Self::new(vec![host_and_port.into()], opts)
     }
 }

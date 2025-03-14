@@ -13,7 +13,7 @@ const QUERY_SET: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').a
 type Changed = bool;
 type UpdateResult = std::result::Result<Changed, UpdateError>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum UpdateError {
     NoHost,
     BadAuth,

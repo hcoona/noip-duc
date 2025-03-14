@@ -1,5 +1,12 @@
 ### [Unreleased]
 
+### [3.2.0] - 2024-07-10
+
+- Fix: properly parse hostnames with round-robin @label
+- Change: refactor to library, add observer and control traits for future UI work
+- Change: Rust 1.79.0
+- Change: Update dependencies
+
 ### [3.1.1] - 2024-04-10
 
 - Change: Update dependencies, handle adviory https://rustsec.org/advisories/RUSTSEC-2024-0019 in mio

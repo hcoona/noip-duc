@@ -1,26 +1,11 @@
-use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
-use std::process::Command;
-use std::{thread, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use log::{debug, error, info};
+use log::{debug, info};
 
-mod dns_method;
-mod noip2;
-mod public_ip;
-mod update;
-
-use public_ip::IpMethods;
-use update::{update, UpdateError};
-
-const USER_AGENT: &str = concat!(
-    clap::crate_name!(),
-    "/",
-    clap::crate_version!(),
-    " <support@noip.com>",
-);
+use noip_duc::{noip2, public_ip::IpMethods, updater, NotificationLogger, SleepOnlyControl};
 
 // This is used to handle --import since the `exclusive` and `conflicts_with` options don't seem to
 // work in clap 3.0.0-beta.5. Perhaps they will work in the future or when it goes stable. This
@@ -123,6 +108,21 @@ struct Config {
     import: Option<Option<PathBuf>>,
 }
 
+impl<'a> From<&'a Config> for noip_duc::Config<'a> {
+    fn from(config: &'a Config) -> Self {
+        Self {
+            username: config.username.as_str(),
+            password: config.password.as_str(),
+            hostnames: config.hostnames.as_ref(),
+            check_interval: config.check_interval,
+            http_timeout: config.http_timeout,
+            exec_on_change: config.exec_on_change.as_deref(),
+            ip_method: &config.ip_method,
+            once: config.once,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum LogLevel {
     Trace,
@@ -190,6 +190,17 @@ fn parse_hostnames(s: &str) -> Result<Vec<String>> {
 }
 
 fn is_hostname(h: &str) -> bool {
+    // May contain a round-robin label
+    let h = match h.split_once('@') {
+        Some((h, rr)) => {
+            if !is_rr_label(rr) {
+                return false;
+            }
+            h
+        }
+        None => h,
+    };
+
     if h.split('.').count() > 63 {
         return false;
     }
@@ -205,6 +216,13 @@ fn is_label(s: &str) -> bool {
         && s.chars().next().map_or(false, |c| c != '-')
         // Cannot end with hyphen or be empty
         && s.chars().last().map_or(false, |c| c != '-')
+}
+
+// Check round-robin label. It is the part after an @ in the hostname field.
+fn is_rr_label(s: &str) -> bool {
+    s.chars().all(|c| char::is_ascii_alphanumeric(&c) || matches!(c, '-' | '_'))
+        // Cannot start with hyphen or be empty
+        && s.chars().next().map_or(false, |c| c != '-')
 }
 
 fn main() -> anyhow::Result<()> {
@@ -243,7 +261,7 @@ fn main() -> anyhow::Result<()> {
 
     debug!("{:?}", config);
 
-    updater(&config)
+    updater((&config).into(), NotificationLogger {}, SleepOnlyControl {}).map_err(Into::into)
 }
 
 fn daemonize(c: &Config) -> Result<()> {
@@ -276,116 +294,41 @@ fn daemonize(c: &Config) -> Result<()> {
     Ok(())
 }
 
-fn updater(c: &Config) -> Result<()> {
-    let mut last_ip: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-    let mut retries = 0u8;
-    let mut last_error: Option<UpdateError> = None;
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    info!("Starting update loop");
-
-    loop {
-        debug!("checking for new ip");
-
-        let ip = c.ip_method.get(c.http_timeout);
-
-        if last_ip != ip {
-            info!("got new ip; ip={}, last_ip={}", ip, last_ip);
-
-            match update(
-                &c.username,
-                &c.password,
-                c.hostnames.as_ref(),
-                ip,
-                c.http_timeout,
-            ) {
-                Ok(changed) => {
-                    info!("update succeeded; ip={}, changed={}", ip, changed);
-
-                    if changed {
-                        if let Some(ref cmd_tmpl) = c.exec_on_change {
-                            exec_command(cmd_tmpl, ip.to_string(), last_ip.to_string());
-                        }
-                    }
-
-                    last_ip = ip;
-                    retries = 0;
-                    last_error = None;
-                }
-                Err(e) => {
-                    error!("update failed; {}", e);
-                    last_error = Some(e);
-                    retries += 1;
-                }
-            }
-        } else {
-            debug!("got same ip; ip={}, last_ip={}", ip, last_ip);
-        }
-
-        if c.once {
-            info!("In --once mode, exiting.");
-            return match last_error {
-                Some(e) => Err(e.into()),
-                None => Ok(()),
-            };
-        }
-
-        let dur = match last_error {
-            Some(ref e) => e.retry_backoff(retries, c.check_interval),
-            None => c.check_interval,
-        };
-
-        info!("checking ip again in {}", humantime::format_duration(dur));
-        thread::sleep(dur);
-    }
-}
-
-fn exec_command(cmd_tmpl: &str, ip: impl AsRef<str>, last_ip: impl AsRef<str>) {
-    use std::str::from_utf8;
-
-    fn shell() -> Command {
-        if cfg!(target_os = "windows") {
-            let mut cmd = Command::new("cmd");
-            cmd.arg("/C");
-            cmd
-        } else {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c");
-            cmd
+    #[test]
+    fn is_rr_label_good() {
+        for s in ["SERVER-1", "SERVER_1", "_TEST", "_test", "test-"] {
+            assert!(is_rr_label(s), r#"input="{s}""#);
         }
     }
 
-    let cmd = cmd_tmpl
-        .replace("{{CURRENT_IP}}", ip.as_ref())
-        .replace("{{LAST_IP}}", last_ip.as_ref());
-
-    debug!("running command; exec_on_change={cmd}");
-
-    match shell()
-        .arg(&cmd)
-        .env("CURRENT_IP", ip.as_ref())
-        .env("LAST_IP", last_ip.as_ref())
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                info!(
-                    "command success for `{}`; stdout={}, stderr={}",
-                    &cmd,
-                    from_utf8(&output.stdout).unwrap_or(""),
-                    from_utf8(&output.stderr).unwrap_or("")
-                );
-            } else {
-                error!(
-                    "command failed for `{}`; exit={}, stdout={}, stderr={}'",
-                    &cmd,
-                    output.status.code().unwrap_or(-1),
-                    from_utf8(&output.stdout).unwrap_or(""),
-                    from_utf8(&output.stderr).unwrap_or("")
-                );
-            }
+    #[test]
+    fn is_rr_label_bad() {
+        for s in ["SERVER 1", "-test", "^TEST", "te&st", "te|t"] {
+            assert!(!is_rr_label(s), r#"input="{s}""#);
         }
-        Err(e) => {
-            error!("failed to execute cmd `{cmd}`; {e:?}");
+    }
+
+    #[test]
+    fn is_hostname_good() {
+        for s in ["h", "h.test", "h.example.com", "h.example.com@test"] {
+            assert!(is_hostname(s), r#"input="{s}""#);
+        }
+    }
+
+    #[test]
+    fn is_hostname_bad() {
+        for s in [
+            " ",
+            "h test",
+            "h.example com",
+            "h.example.com@-test",
+            "h.example.com^test",
+        ] {
+            assert!(!is_hostname(s), r#"input="{s}""#);
         }
     }
 }

@@ -1,16 +1,53 @@
 use std::cell::Cell;
-use std::net::IpAddr;
+use std::net::{AddrParseError, IpAddr};
 use std::{thread, time::Duration};
 
-use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use url::Url;
 
-use crate::dns_method::DnsMethod;
+use crate::dns_method::{self, DnsMethod};
+use crate::{Notification, Observer};
 
 const IP_URL: &str = "http://ip1.dynupdate.no-ip.com";
 const IP_URL_8245: &str = "http://ip1.dynupdate.no-ip.com:8245";
 const IP_URL_AWS: &str = "http://169.254.169.254/latest/meta-data/public-ipv4";
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("DNS method failed; {0}")]
+    DnsMethod(#[from] dns_method::Error),
+
+    #[error(transparent)]
+    ParseError(#[from] ParseError),
+
+    #[error(transparent)]
+    HttpError(#[from] minreq::Error),
+
+    #[error("Failed to get IP request body from {0}; {1}")]
+    ResponseBodyNotStr(String, String),
+
+    #[error("Failed to parse IP from {0}; err={1}, body={2}")]
+    ResponseParseIp(String, AddrParseError, String),
+
+    #[cfg(test)]
+    #[error("Fail expected")]
+    ExpectedFail,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Failed to parse IP URL; {0}")]
+    UrlParse(#[from] url::ParseError),
+
+    #[error("Failed to parse IP; {0}")]
+    AddrParse(#[from] AddrParseError),
+
+    #[error("Failed to parse IP; {0}")]
+    DnsMethodError(#[from] dns_method::Error),
+
+    #[error("Unknown IP method '{0}'")]
+    UnknownMethod(String),
+}
 
 // TODO: Consider Box<DnsMethod> when making a list of IpMethod and getting rid of this clippy
 // suppression
@@ -30,8 +67,19 @@ pub struct IpMethods {
     methods: Vec<(IpMethod, Cell<bool>)>,
 }
 
+impl Default for IpMethods {
+    fn default() -> Self {
+        [
+            IpMethod::Http(IP_URL.to_owned()),
+            IpMethod::Http(IP_URL_8245.to_owned()),
+        ]
+        .into_iter()
+        .collect()
+    }
+}
+
 impl std::str::FromStr for IpMethod {
-    type Err = anyhow::Error;
+    type Err = ParseError;
 
     fn from_str(method: &str) -> Result<Self, Self::Err> {
         match method {
@@ -47,24 +95,24 @@ impl std::str::FromStr for IpMethod {
             m if m.starts_with("http://") => Ok(Self::Http(Url::parse(m)?.to_string())),
             m if m.starts_with("https://") => Ok(Self::Http(Url::parse(m)?.to_string())),
             m if m.starts_with("static:") => Ok(Self::Static(m[7..].parse()?)),
-            m => Err(anyhow::anyhow!("unknown ip method {}", m)),
+
+            m => Err(ParseError::UnknownMethod(m.into())),
         }
     }
 }
 
-fn get_ip_http(url: &str, timeout: Duration) -> anyhow::Result<IpAddr> {
+fn get_ip_http(url: &str, timeout: Duration) -> Result<IpAddr, Error> {
     let resp = minreq::get(url)
         .with_header("user-agent", crate::USER_AGENT)
         .with_timeout(timeout.as_secs())
         .send()?;
 
-    let ip = resp
+    let body = resp
         .as_str()
-        .with_context(|| format!("Failed to get IP request body from {}", IP_URL))?
-        .parse()
-        .with_context(|| format!("Failed to parse IP from {}", IP_URL))?;
+        .map_err(|e| Error::ResponseBodyNotStr(url.into(), e.to_string()))?;
 
-    Ok(ip)
+    body.parse()
+        .map_err(|e| Error::ResponseParseIp(url.into(), e, body.into()))
 }
 
 const fn retry_backoff(retry: u8) -> Duration {
@@ -79,10 +127,10 @@ const fn retry_backoff(retry: u8) -> Duration {
 }
 
 impl IpMethod {
-    fn try_get(&self, http_timeout: Duration) -> anyhow::Result<IpAddr> {
+    fn try_get(&self, http_timeout: Duration) -> Result<IpAddr, Error> {
         match self {
             Self::Http(url) => get_ip_http(url, http_timeout),
-            Self::Dns(m) => m.get_ip(),
+            Self::Dns(m) => m.get_ip().map_err(Into::into),
             Self::Static(ip) => Ok(*ip),
 
             #[cfg(test)]
@@ -91,13 +139,13 @@ impl IpMethod {
                     panic!("failed ip method should not be called!");
                 } else {
                     b.set(true);
-                    Err(anyhow::Error::msg("expected fail"))
+                    Err(Error::ExpectedFail)
                 }
             }
         }
     }
 
-    pub fn get(&self, http_timeout: Duration) -> IpAddr {
+    pub fn get(&self, http_timeout: Duration, observer: impl Observer) -> IpAddr {
         let mut retries = 0u8;
 
         loop {
@@ -106,23 +154,22 @@ impl IpMethod {
                 Err(e) => e,
             };
 
-            let d = retry_backoff(retries);
+            let next_try = retry_backoff(retries);
 
-            warn!(
-                "Failed to get ip (retry={}), retrying after {}; {}",
+            observer.notify(Notification::GetIpFailedWillRetry(
+                error.to_string(),
                 retries,
-                humantime::format_duration(d),
-                error
-            );
+                next_try,
+            ));
 
             retries += 1;
-            thread::sleep(d);
+            thread::sleep(next_try);
         }
     }
 }
 
 impl std::str::FromStr for IpMethods {
-    type Err = anyhow::Error;
+    type Err = ParseError;
 
     fn from_str(methods: &str) -> Result<Self, Self::Err> {
         methods.split(',').map(IpMethod::from_str).collect()
@@ -141,6 +188,12 @@ impl std::iter::FromIterator<IpMethod> for IpMethods {
 }
 
 impl IpMethods {
+    pub fn empty() -> Self {
+        Self {
+            methods: Vec::new(),
+        }
+    }
+
     fn len(&self) -> usize {
         self.methods.len()
     }
@@ -151,9 +204,9 @@ impl IpMethods {
         }
     }
 
-    pub fn get(&self, http_timeout: Duration) -> IpAddr {
+    pub fn get(&self, http_timeout: Duration, observer: impl Observer) -> IpAddr {
         if self.len() == 1 {
-            return self.methods[0].0.get(http_timeout);
+            return self.methods[0].0.get(http_timeout, observer);
         }
 
         let mut retries = 0u8;
@@ -196,6 +249,8 @@ impl IpMethods {
 #[cfg(test)]
 mod test {
     use super::IpMethods;
+    use crate::NotificationLogger;
+
     #[test]
     fn ipmethods_fromstr_for_one() {
         let x = "http".parse::<IpMethods>();
@@ -255,7 +310,7 @@ mod test {
         let x = "fail,static:169.254.1.1"
             .parse::<IpMethods>()
             .expect("ip methods");
-        let _ = x.get(std::time::Duration::from_secs(1));
+        let _ = x.get(std::time::Duration::from_secs(1), NotificationLogger);
         assert!(x.methods[0].1.get());
         //dbg!(x);
         //assert!(false);
@@ -267,6 +322,6 @@ mod test {
         let x = "fail,fail".parse::<IpMethods>().expect("ip methods");
         // We expect this to panic because failed methods should be retried if all fail and Fail
         // always panic's on a second call.
-        x.get(std::time::Duration::from_secs(1));
+        x.get(std::time::Duration::from_secs(1), NotificationLogger);
     }
 }

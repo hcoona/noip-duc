@@ -2,9 +2,11 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::io::{Read, Seek};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
+
+type Result<T> = std::result::Result<T, Error>;
 
 const OFFSET_MAGIC: u64 = 20;
 const OFFSET_RLENGTH: u64 = 24;
@@ -81,17 +83,110 @@ impl fmt::Display for Config {
     }
 }
 
-pub fn import(filename: &std::path::Path) -> Result<Config> {
+#[derive(Debug, thiserror::Error)]
+pub struct ImportError {
+    pub source: Error,
+    pub filename: PathBuf,
+}
+
+impl fmt::Display for ImportError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Failed to import noip2 config from '{}'; {}",
+            self.filename.display(),
+            self.source
+        )
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Base64(#[from] base64::DecodeError),
+
+    #[error(transparent)]
+    Utf8(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    Utf8String(#[from] std::string::FromUtf8Error),
+
+    #[error("File does not appear to be a noip2 config due to incorrect magic bytes, 0x{0:08X}")]
+    IncorrectMagic(u32),
+
+    #[error(transparent)]
+    ReadError(#[from] ReadError),
+
+    #[error(transparent)]
+    ValueError(#[from] ValueError),
+
+    #[error("username is missing")]
+    UsernameMissing,
+
+    #[error("password ('pass' field) is missing")]
+    PasswordMissing,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValueError {
+    #[error("file data too short")]
+    DataTooShort,
+
+    #[error("encrypt flag has invalid value")]
+    EncryptFlag,
+
+    #[error("rlength appears invalid")]
+    RLength(u16),
+
+    #[error("rlength past end of file")]
+    RLengthPastEof,
+
+    #[error("elength appears invalid")]
+    ELength(u16),
+
+    #[error("elength past end of file")]
+    ELengthPastEof,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error("could not open file; {0}")]
+    Open(io::Error),
+
+    #[error("could not read file; {0}")]
+    ReadToEnd(io::Error),
+
+    #[error("could not read magic bytes; {0}")]
+    MagicBytes(io::Error),
+
+    #[error("could not seek to end of file; {0}")]
+    FindSize(io::Error),
+
+    #[error("could not read elength bytes; {0}")]
+    ELength(io::Error),
+
+    #[error("could not read rlength bytes; {0}")]
+    RLength(io::Error),
+}
+
+pub fn import(filename: &Path) -> std::result::Result<Config, ImportError> {
     let mut data = Vec::new();
 
-    {
-        let mut file = fs::File::open(filename)
-            .with_context(|| format!("while opening file {:?}", filename))?;
-        file.read_to_end(&mut data)
-            .with_context(|| format!("while reading file {:?}", filename))?;
-    }
+    let _ = fs::File::open(filename)
+        .map_err(|e| ImportError {
+            source: ReadError::Open(e).into(),
+            filename: filename.into(),
+        })?
+        .read_to_end(&mut data)
+        .map_err(|e| ImportError {
+            source: ReadError::ReadToEnd(e).into(),
+            filename: filename.into(),
+        })?;
 
-    Config::parse(&data)
+    Config::parse(&data).map_err(|source| ImportError {
+        source,
+        filename: filename.into(),
+    })
 }
 
 fn decode_to_bytes<T: std::convert::AsRef<[u8]>>(i: T, encrypt: bool) -> Result<Vec<u8>> {
@@ -127,23 +222,20 @@ where
 
     match rdr.read_u32::<LittleEndian>() {
         Ok(v) if v == MAGIC => Ok(()),
-        Ok(v) => Err(anyhow::anyhow!(
-            "does not appear to be a noip2 config due to incorrect magic bytes, 0x{:08X}",
-            v
-        )),
-        Err(e) => Err(anyhow::Error::new(e).context("reading magic bytes failed")),
+        Ok(v) => Err(Error::IncorrectMagic(v)),
+        Err(e) => Err(ReadError::MagicBytes(e).into()),
     }
 }
 
 fn get_encrypt(i: &[u8]) -> Result<bool> {
     if OFFSET_ENCRYPTED >= i.len() {
-        return Err(anyhow::anyhow!("data too short"));
+        return Err(ValueError::DataTooShort.into());
     }
 
     Ok(match i[OFFSET_ENCRYPTED] {
         0 => false,
         1 => true,
-        _ => return Err(anyhow::anyhow!("encrypt flag has invalid value")),
+        _ => return Err(ValueError::EncryptFlag.into()),
     })
 }
 
@@ -153,7 +245,7 @@ where
     io::Cursor<T>: io::Read + io::Seek,
 {
     rdr.seek(io::SeekFrom::End(0))
-        .context("while getting noip2 config data length")?;
+        .map_err(ReadError::FindSize)?;
     Ok(rdr.position())
 }
 
@@ -165,12 +257,9 @@ where
     rdr.set_position(OFFSET_RLENGTH);
 
     let rlen = match rdr.read_u16::<LittleEndian>() {
-        Ok(v) if (MIN_LEN..=MAX_LEN).contains(&v) => Ok(v),
-        Ok(v) => Err(anyhow::anyhow!(
-            "received an rlength that looks invalid, {}",
-            v
-        )),
-        Err(e) => Err(anyhow::Error::new(e).context("reading rlength bytes failed")),
+        Ok(v) if (MIN_LEN..=MAX_LEN).contains(&v) => Ok::<_, Error>(v),
+        Ok(v) => Err(ValueError::RLength(v).into()),
+        Err(e) => Err(ReadError::RLength(e).into()),
     }?;
 
     Ok(rlen)
@@ -185,11 +274,8 @@ where
 
     match rdr.read_u16::<LittleEndian>() {
         Ok(v) if v <= MAX_LEN => Ok(v),
-        Ok(v) => Err(anyhow::anyhow!(
-            "received an elength that looks invalid, {}",
-            v
-        )),
-        Err(e) => Err(anyhow::Error::new(e).context("reading elength bytes failed")),
+        Ok(v) => Err(ValueError::ELength(v).into()),
+        Err(e) => Err(ReadError::ELength(e).into()),
     }
 }
 
@@ -206,10 +292,10 @@ fn get_uph(
     let end = OFFSET_REQ + rlen as usize;
 
     if end > get_data_len(rdr)? as usize {
-        return Err(anyhow::anyhow!("rlength is past the end of the file"));
+        return Err(ValueError::RLengthPastEof.into());
     }
 
-    let req = decode_to_bytes(&rdr.get_ref()[start..end], encrypt).unwrap();
+    let req = decode_to_bytes(&rdr.get_ref()[start..end], encrypt)?;
     for (k, v) in form_urlencoded::parse(req.as_ref()) {
         //dbg!(&k, &v);
         match k.as_ref() {
@@ -220,16 +306,9 @@ fn get_uph(
         }
     }
 
-    if username.is_none() {
-        return Err(anyhow::anyhow!("username is missing"));
-    }
-    if password.is_none() {
-        return Err(anyhow::anyhow!("password ('pass' field) is missing"));
-    }
-
     Ok((
-        username.expect("non-empty username"),
-        password.expect("non-empty password"),
+        username.ok_or(Error::UsernameMissing)?,
+        password.ok_or(Error::PasswordMissing)?,
         hostnames,
     ))
 }
@@ -249,7 +328,7 @@ fn get_execpath(
     let end = start + elen as usize - 1;
 
     if end > get_data_len(rdr)? as usize {
-        return Err(anyhow::anyhow!("elength is past the end of the file"));
+        return Err(ValueError::ELengthPastEof.into());
     }
 
     Ok(Some(decode_to_string(&rdr.get_ref()[start..end], encrypt)?))
