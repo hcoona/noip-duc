@@ -163,3 +163,10 @@ noip-duc --ip-method dns:ns1-1.akamaitech.net:53:whoami.akamai.net:A
 noip-duc --ip-method dns:ns1.google.com:53:o-o.myaddr.l.google.com:TXT
 noip-duc --ip-method dns:a14-64.akam.net:53:whoami.ds.akahelp.net:TXT
 ```
+
+Migration Note
+--------------
+
+This fork has migrated from the deprecated `trust-dns-resolver` crate (renamed upstream) to the
+`hickory-resolver` crate (Hickory DNS project, >=0.24). Functionality and CLI remain the same; only
+the underlying resolver dependency changed to follow upstream rebranding.

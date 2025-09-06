@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.75
+ARG RUST_VERSION=1.86
 
 # ============ Build Stage ============
 FROM mcr.microsoft.com/azurelinux/base/rust:${RUST_VERSION} AS build

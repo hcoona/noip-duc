@@ -4,9 +4,9 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use log::debug;
-use trust_dns_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use trust_dns_resolver::proto::rr::rdata::txt::TXT;
-use trust_dns_resolver::Resolver;
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::proto::rr::rdata::txt::TXT;
+use hickory_resolver::Resolver;
 
 const IPCAST1: &str = "ipcast1.dynupdate.no-ip.com:8253";
 const IPCAST2: &str = "ipcast2.dynupdate.no-ip.com:8253";
@@ -29,7 +29,7 @@ pub enum Error {
     NoIpInTxtAnswers,
 
     #[error("Failed to resolve; {0}")]
-    TrustResolveError(#[from] trust_dns_resolver::error::ResolveError),
+    TrustResolveError(#[from] hickory_resolver::error::ResolveError),
 
     #[error("Failed to create dns method with {0} as resolver; possibly no internet connection")]
     NsLookup(Cow<'static, str>),
@@ -183,7 +183,7 @@ impl ResolverFactory {
             })
         }
 
-        Resolver::new(config, self.opts).map_err(|e| Error::CreateResolver(format!("{e}")))
+        Resolver::new(config, self.opts.clone()).map_err(|e| Error::CreateResolver(format!("{e}")))
     }
 
     fn for_ipcast() -> Result<Self, Error> {
