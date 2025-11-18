@@ -79,6 +79,8 @@ ignore = [
     # For proc-macro-error, it is unmaintained and only used during build of clap_derive.
     "RUSTSEC-2021-0145",
     "RUSTSEC-2024-0370",
+    # daemonize
+    "RUSTSEC-2025-0069",
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -94,12 +96,14 @@ ignore = [
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.11 short identifier (+ optional exception)].
 allow = [
+    "BSD-3-Clause",
     "MIT",
     "Apache-2.0",
     "ISC",
     "MPL-2.0",
     "OpenSSL",
-    "Unicode-DFS-2016"
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
