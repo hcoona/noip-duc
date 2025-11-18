@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps(cargo)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "docker"
+    directory: "/docker/debian"
+    schedule:
+      interval: "monthly"
+      time: "03:30"
+      timezone: "UTC"
+
+  - package-ecosystem: "docker"
+    directory: "/docker/azurelinux"
+    schedule:
+      interval: "monthly"
+      time: "03:45"
+      timezone: "UTC"
