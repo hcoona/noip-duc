@@ -35,7 +35,7 @@ humantime = "^2"
 log = "^0.4"
 minreq = { version = "^2.12", features = ["https-rustls"] }
 percent-encoding = "^2"
-thiserror = "1.0"
+thiserror = "2.0"
 # Renamed upstream: trust-dns-resolver >=0.24 moved to Hickory DNS and crate renamed to hickory-resolver.
 # See: https://github.com/hickory-dns/hickory-dns
 hickory-resolver = "^0.24"
