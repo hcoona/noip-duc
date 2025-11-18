@@ -38,7 +38,7 @@ percent-encoding = "^2"
 thiserror = "1.0"
 # Renamed upstream: trust-dns-resolver >=0.24 moved to Hickory DNS and crate renamed to hickory-resolver.
 # See: https://github.com/hickory-dns/hickory-dns
-hickory-resolver = "^0.24"
+hickory-resolver = "^0.25"
 url = "^2.5"
 # Explicitly add tokio (needs >=1.44.2 to address GHSA-rr8g-9fpq-6wmg)
 tokio = { version = "=1.44.2", features = ["rt-multi-thread", "macros", "time", "net"] }
