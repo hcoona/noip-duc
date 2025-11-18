@@ -194,7 +194,9 @@ fn parse_hostnames(s: &str) -> Result<Vec<String>> {
 
 fn is_hostname(h: &str) -> bool {
     // Extra safety: restrict to ASCII to avoid triggering punycode/IDNA processing paths
-    if !h.is_ascii() { return false; }
+    if !h.is_ascii() {
+        return false;
+    }
     // May contain a round-robin label
     let h = match h.split_once('@') {
         Some((h, rr)) => {
