@@ -11,6 +11,14 @@ updates:
     commit-message:
       prefix: "deps(cargo)"
       include: "scope"
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+      cargo-major:
+        update-types:
+          - major
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -20,6 +28,11 @@ updates:
       time: "03:15"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    groups:
+      actions-minor:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: "docker"
     directory: "/docker/debian"
