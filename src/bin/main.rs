@@ -86,7 +86,7 @@ struct Config {
     ///
     /// Possible values are
     /// - 'aws-metadata': uses the AWS metadata URL to get the Elastic IP
-    ///                   associated with your instance.
+    ///   associated with your instance.
     /// - 'dns': Use No-IP's DNS public IP lookup system.
     /// - 'dns:<nameserver>:<port>:<qname>:<record type>': custom DNS lookup.
     /// - 'http': No-IP's HTTP method on port 80.
@@ -220,16 +220,16 @@ fn is_hostname(h: &str) -> bool {
 fn is_label(s: &str) -> bool {
     s.chars().all(|c| char::is_ascii_alphanumeric(&c) || c == '-')
         // Cannot start with hyphen or be empty
-        && s.chars().next().map_or(false, |c| c != '-')
+        && s.chars().next().is_some_and(|c| c != '-')
         // Cannot end with hyphen or be empty
-        && s.chars().last().map_or(false, |c| c != '-')
+        && s.chars().last().is_some_and(|c| c != '-')
 }
 
 // Check round-robin label. It is the part after an @ in the hostname field.
 fn is_rr_label(s: &str) -> bool {
     s.chars().all(|c| char::is_ascii_alphanumeric(&c) || matches!(c, '-' | '_'))
         // Cannot start with hyphen or be empty
-        && s.chars().next().map_or(false, |c| c != '-')
+        && s.chars().next().is_some_and(|c| c != '-')
 }
 
 fn main() -> anyhow::Result<()> {

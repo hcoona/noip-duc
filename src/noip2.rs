@@ -340,7 +340,7 @@ mod test {
     use std::io::Read;
 
     // TODO: make a few from different client versions
-    const FIXTURE: &'static str = "test-data/everything-2.1.7.conf";
+    const FIXTURE: &str = "test-data/everything-2.1.7.conf";
 
     fn get_data() -> Vec<u8> {
         let mut data = Vec::new();
@@ -352,7 +352,7 @@ mod test {
     #[test]
     fn can_decode_to_bytes_encrypt() {
         let data = "dGVzdA==";
-        let res = super::decode_to_bytes(&data.as_bytes(), true);
+        let res = super::decode_to_bytes(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!([116, 101, 115, 116], res.unwrap().as_slice());
@@ -361,7 +361,7 @@ mod test {
     #[test]
     fn can_decode_to_bytes_noencrypt() {
         let data = "test";
-        let res = super::decode_to_bytes(&data.as_bytes(), false);
+        let res = super::decode_to_bytes(data.as_bytes(), false);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!([116, 101, 115, 116], res.expect("res").as_slice());
@@ -370,7 +370,7 @@ mod test {
     #[test]
     fn can_decode_to_bytes_encrypt_fails_on_invalid_base64() {
         let data = "dGVzd==";
-        let res = super::decode_to_bytes(&data.as_bytes(), true);
+        let res = super::decode_to_bytes(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_err());
     }
@@ -378,7 +378,7 @@ mod test {
     #[test]
     fn can_decode_to_bytes_encrypt_empty_vec_on_empty() {
         let data = "";
-        let res = super::decode_to_bytes(&data.as_bytes(), true);
+        let res = super::decode_to_bytes(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!(Vec::<u8>::new(), res.expect("res"));
@@ -387,7 +387,7 @@ mod test {
     #[test]
     fn can_decode_to_string_encrypt() {
         let data = "dGVzdA==";
-        let res = super::decode_to_string(&data.as_bytes(), true);
+        let res = super::decode_to_string(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!("test", res.unwrap());
@@ -396,7 +396,7 @@ mod test {
     #[test]
     fn can_decode_to_string_noencrypt() {
         let data = "test";
-        let res = super::decode_to_string(&data.as_bytes(), false);
+        let res = super::decode_to_string(data.as_bytes(), false);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!("test", res.expect("res"));
@@ -405,7 +405,7 @@ mod test {
     #[test]
     fn can_decode_to_string_encrypt_fails_on_invalid_base64() {
         let data = "dGVzd==";
-        let res = super::decode_to_string(&data.as_bytes(), true);
+        let res = super::decode_to_string(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_err());
     }
@@ -413,7 +413,7 @@ mod test {
     #[test]
     fn can_decode_to_string_encrypt_empty_string_on_empty() {
         let data = "";
-        let res = super::decode_to_string(&data.as_bytes(), true);
+        let res = super::decode_to_string(data.as_bytes(), true);
         dbg!(&res);
         assert!(res.is_ok());
         assert_eq!(String::new(), res.expect("res"));
