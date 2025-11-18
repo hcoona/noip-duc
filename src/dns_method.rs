@@ -3,10 +3,10 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
-use log::debug;
 use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::proto::rr::rdata::txt::TXT;
 use hickory_resolver::Resolver;
+use log::debug;
 
 const IPCAST1: &str = "ipcast1.dynupdate.no-ip.com:8253";
 const IPCAST2: &str = "ipcast2.dynupdate.no-ip.com:8253";
