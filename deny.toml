@@ -70,15 +70,6 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    # atty and proce-macro-error are used by clap 3.2.25. These can be removed
-    # when clap can be upgraded. See Cargo.toml for more info.
-    # It is safe to ignore because:
-    # For atty:
-    # > the pointer won't be unaligned unless a custom global allocator is used
-    # and we are not using a custom allocator.
-    # For proc-macro-error, it is unmaintained and only used during build of clap_derive.
-    "RUSTSEC-2021-0145",
-    "RUSTSEC-2024-0370",
     # daemonize
     "RUSTSEC-2025-0069",
 ]
@@ -102,7 +93,6 @@ allow = [
     "ISC",
     "MPL-2.0",
     "OpenSSL",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
 ]
 # The confidence threshold for detecting a license from license text.
