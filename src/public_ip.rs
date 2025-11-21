@@ -1,5 +1,5 @@
-use std::cell::Cell;
 use std::net::{AddrParseError, IpAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread, time::Duration};
 
 use log::{debug, info, warn};
@@ -59,12 +59,36 @@ pub enum IpMethod {
     Static(IpAddr),
 
     #[cfg(test)]
-    Fail(Cell<bool>),
+    Fail(AtomicBool),
+}
+
+impl Clone for IpMethod {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Dns(d) => Self::Dns(d.clone()),
+            Self::Http(s) => Self::Http(s.clone()),
+            Self::Static(ip) => Self::Static(*ip),
+            #[cfg(test)]
+            Self::Fail(b) => Self::Fail(AtomicBool::new(b.load(Ordering::Relaxed))),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct IpMethods {
-    methods: Vec<(IpMethod, Cell<bool>)>,
+    methods: Vec<(IpMethod, AtomicBool)>,
+}
+
+impl Clone for IpMethods {
+    fn clone(&self) -> Self {
+        Self {
+            methods: self
+                .methods
+                .iter()
+                .map(|(m, b)| (m.clone(), AtomicBool::new(b.load(Ordering::Relaxed))))
+                .collect(),
+        }
+    }
 }
 
 impl Default for IpMethods {
@@ -89,7 +113,7 @@ impl std::str::FromStr for IpMethod {
             "http-port-8245" => Ok(Self::Http(IP_URL_8245.to_owned())),
 
             #[cfg(test)]
-            "fail" => Ok(Self::Fail(Cell::new(false))),
+            "fail" => Ok(Self::Fail(AtomicBool::new(false))),
 
             m if m.starts_with("dns:") => Ok(Self::Dns(m[4..].parse()?)),
             m if m.starts_with("http://") => Ok(Self::Http(Url::parse(m)?.to_string())),
@@ -135,10 +159,10 @@ impl IpMethod {
 
             #[cfg(test)]
             Self::Fail(b) => {
-                if b.get() {
+                if b.load(Ordering::Relaxed) {
                     panic!("failed ip method should not be called!");
                 } else {
-                    b.set(true);
+                    b.store(true, Ordering::Relaxed);
                     Err(Error::ExpectedFail)
                 }
             }
@@ -182,7 +206,10 @@ impl std::iter::FromIterator<IpMethod> for IpMethods {
         T: IntoIterator<Item = IpMethod>,
     {
         Self {
-            methods: iter.into_iter().map(|m| (m, Cell::new(false))).collect(),
+            methods: iter
+                .into_iter()
+                .map(|m| (m, AtomicBool::new(false)))
+                .collect(),
         }
     }
 }
@@ -200,7 +227,7 @@ impl IpMethods {
 
     fn reset_failed(&self) {
         for i in 0..self.methods.len() {
-            self.methods[i].1.set(false);
+            self.methods[i].1.store(false, Ordering::Relaxed);
         }
     }
 
@@ -213,7 +240,7 @@ impl IpMethods {
 
         loop {
             for (m, had_error) in &self.methods {
-                if had_error.get() {
+                if had_error.load(Ordering::Relaxed) {
                     debug!("Skipping failed IP method {:?}", m);
                     continue;
                 }
@@ -226,7 +253,7 @@ impl IpMethods {
                 };
 
                 warn!("Failed to get IP with method {:?}; {}", m, error);
-                had_error.set(true);
+                had_error.store(true, Ordering::Relaxed);
             }
 
             info!("Setting all failed IP methods to try again");
@@ -250,6 +277,7 @@ impl IpMethods {
 mod test {
     use super::IpMethods;
     use crate::NotificationLogger;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn ipmethods_fromstr_for_one() {
@@ -311,7 +339,7 @@ mod test {
             .parse::<IpMethods>()
             .expect("ip methods");
         let _ = x.get(std::time::Duration::from_secs(1), NotificationLogger);
-        assert!(x.methods[0].1.get());
+        assert!(x.methods[0].1.load(Ordering::Relaxed));
         //dbg!(x);
         //assert!(false);
     }

@@ -45,6 +45,7 @@ pub fn resolve(name: &str) -> Result<SocketAddr, Error> {
         .ok_or_else(|| Error::SystemResolve(name.to_owned(), "no addresses".into()))
 }
 
+#[derive(Clone)]
 pub struct DnsMethod {
     description: String,
     resolver: ResolverFactory,
@@ -53,6 +54,7 @@ pub struct DnsMethod {
 }
 
 #[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, Copy)]
 enum RecordType {
     A,
     AAAA,
@@ -160,6 +162,7 @@ fn parse_txt(txt: &TXT) -> Option<IpAddr> {
     None
 }
 
+#[derive(Clone)]
 struct ResolverFactory {
     nameservers: Vec<Cow<'static, str>>,
     opts: ResolverOpts,

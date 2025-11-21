@@ -21,14 +21,8 @@ path = "src/lib.rs"
 anyhow = "^1"
 base64 = "^0.22"
 byteorder = "^1.5"
-# Cannot go beyond clap 3.2.25 due to IpMethods needing to be Clone + Send + Sync.
-# https://github.com/clap-rs/clap/issues/4347
-# It is absolutely not necessary for this program to require these constraints.
-# These constraints may be relaxed in v5 or we may need to find a cli args
-# parser that is more suited to command line utilities.
-#
-# disable default features to remove dependency on `atty` (brought in by color features).
-clap = { version = "3.2.25", default-features = false, features = ["derive", "env", "cargo", "std"] }
+# disable default features to remove dependency on `atty`/terminal detection brought in by color.
+clap = { version = "^4", default-features = false, features = ["derive", "env", "cargo", "std", "help", "usage", "error-context", "suggestions"] }
 env_logger = "^0.11"
 form_urlencoded = "^1"
 humantime = "^2"

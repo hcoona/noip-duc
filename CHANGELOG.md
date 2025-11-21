@@ -1,5 +1,8 @@
 ### [Unreleased]
 
+- Change: Upgrade `clap` to 4.5.52 and adapt CLI parser
+- Change: Make `IpMethods` Clone + Send + Sync (use `AtomicBool`)
+
 ### [3.3.0] - 2024-09-16
 
 - Change: Rename ControlChannel to Controller, SleepOnlyControl to SleepOnlyController.
