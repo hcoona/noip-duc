@@ -11,14 +11,18 @@ updates:
     commit-message:
       prefix: "deps(cargo)"
       include: "scope"
+    ignore:
+      - dependency-name: "thiserror"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "hickory-resolver"
+        update-types:
+          - "version-update:semver-major"
     groups:
       cargo-minor-patch:
         update-types:
           - minor
           - patch
-      cargo-major:
-        update-types:
-          - major
 
   - package-ecosystem: "github-actions"
     directory: "/"
