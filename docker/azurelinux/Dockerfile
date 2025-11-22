@@ -9,7 +9,7 @@ WORKDIR /build
 # Build with BuildKit source & cache mounts examples:
 #   docker buildx build -f docker/azurelinux/Dockerfile \
 #     --progress=plain .
-# Or simply:
+# Or simply:git
 #   DOCKER_BUILDKIT=1 docker build -f docker/azurelinux/Dockerfile .
 # Lines using --mount require BuildKit.
 
