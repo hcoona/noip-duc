@@ -1,9 +1,12 @@
 use std::net::{AddrParseError, IpAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{thread, time::Duration};
+use std::time::Duration;
 
 use log::{debug, info, warn};
 use url::Url;
+
+use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
 use crate::dns_method::{self, DnsMethod};
 use crate::{Notification, Observer};
@@ -21,13 +24,16 @@ pub enum Error {
     ParseError(#[from] ParseError),
 
     #[error(transparent)]
-    HttpError(#[from] minreq::Error),
+    HttpError(#[from] reqwest::Error),
 
     #[error("Failed to get IP request body from {0}; {1}")]
     ResponseBodyNotStr(String, String),
 
     #[error("Failed to parse IP from {0}; err={1}, body={2}")]
     ResponseParseIp(String, AddrParseError, String),
+
+    #[error("Cancelled")]
+    Cancelled,
 
     #[cfg(test)]
     #[error("Fail expected")]
@@ -125,18 +131,25 @@ impl std::str::FromStr for IpMethod {
     }
 }
 
-fn get_ip_http(url: &str, timeout: Duration) -> Result<IpAddr, Error> {
-    let resp = minreq::get(url)
-        .with_header("user-agent", crate::USER_AGENT)
-        .with_timeout(timeout.as_secs())
-        .send()?;
+async fn get_ip_http_async(
+    url: &str,
+    timeout: Duration,
+    client: &reqwest::Client,
+) -> Result<IpAddr, Error> {
+    let resp = client
+        .get(url)
+        .header("user-agent", crate::USER_AGENT)
+        .timeout(timeout)
+        .send()
+        .await?;
 
     let body = resp
-        .as_str()
+        .text()
+        .await
         .map_err(|e| Error::ResponseBodyNotStr(url.into(), e.to_string()))?;
 
     body.parse()
-        .map_err(|e| Error::ResponseParseIp(url.into(), e, body.into()))
+        .map_err(|e| Error::ResponseParseIp(url.into(), e, body.clone()))
 }
 
 const fn retry_backoff(retry: u8) -> Duration {
@@ -151,10 +164,14 @@ const fn retry_backoff(retry: u8) -> Duration {
 }
 
 impl IpMethod {
-    fn try_get(&self, http_timeout: Duration) -> Result<IpAddr, Error> {
+    async fn try_get(
+        &self,
+        http_timeout: Duration,
+        client: &reqwest::Client,
+    ) -> Result<IpAddr, Error> {
         match self {
-            Self::Http(url) => get_ip_http(url, http_timeout),
-            Self::Dns(m) => m.get_ip().map_err(Into::into),
+            Self::Http(url) => get_ip_http_async(url, http_timeout, client).await,
+            Self::Dns(m) => m.get_ip().await.map_err(Into::into),
             Self::Static(ip) => Ok(*ip),
 
             #[cfg(test)]
@@ -169,25 +186,40 @@ impl IpMethod {
         }
     }
 
-    pub fn get(&self, http_timeout: Duration, observer: impl Observer) -> IpAddr {
+    pub async fn get(
+        &self,
+        http_timeout: Duration,
+        observer: impl Observer,
+        client: &reqwest::Client,
+        cancel: &CancellationToken,
+    ) -> Result<IpAddr, Error> {
         let mut retries = 0u8;
 
         loop {
-            let error = match self.try_get(http_timeout) {
-                Ok(ip) => return ip,
-                Err(e) => e,
+            let result: Result<IpAddr, Error> = tokio::select! {
+                _ = cancel.cancelled() => Err(Error::Cancelled),
+                res = self.try_get(http_timeout, client) => res,
             };
 
-            let next_try = retry_backoff(retries);
+            match result {
+                Ok(ip) => return Ok(ip),
+                Err(e @ Error::Cancelled) => return Err(e),
+                Err(error) => {
+                    let next_try = retry_backoff(retries);
 
-            observer.notify(Notification::GetIpFailedWillRetry(
-                error.to_string(),
-                retries,
-                next_try,
-            ));
+                    observer.notify(Notification::GetIpFailedWillRetry(
+                        error.to_string(),
+                        retries,
+                        next_try,
+                    ));
 
-            retries += 1;
-            thread::sleep(next_try);
+                    retries += 1;
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(Error::Cancelled),
+                        _ = sleep(next_try) => {}
+                    }
+                }
+            }
         }
     }
 }
@@ -231,15 +263,27 @@ impl IpMethods {
         }
     }
 
-    pub fn get(&self, http_timeout: Duration, observer: impl Observer) -> IpAddr {
+    pub async fn get(
+        &self,
+        http_timeout: Duration,
+        observer: impl Observer,
+        client: &reqwest::Client,
+        cancel: &CancellationToken,
+    ) -> Result<IpAddr, Error> {
         if self.len() == 1 {
-            return self.methods[0].0.get(http_timeout, observer);
+            return self.methods[0]
+                .0
+                .get(http_timeout, observer, client, cancel)
+                .await;
         }
 
         let mut retries = 0u8;
 
         loop {
             for (m, had_error) in &self.methods {
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
                 if had_error.load(Ordering::Relaxed) {
                     debug!("Skipping failed IP method {:?}", m);
                     continue;
@@ -247,13 +291,19 @@ impl IpMethods {
 
                 info!("Attempting to get IP with method {:?}", m);
 
-                let error = match m.try_get(http_timeout) {
-                    Ok(ip) => return ip,
-                    Err(e) => e,
+                let result: Result<IpAddr, Error> = tokio::select! {
+                    _ = cancel.cancelled() => Err(Error::Cancelled),
+                    res = m.try_get(http_timeout, client) => res,
                 };
 
-                warn!("Failed to get IP with method {:?}; {}", m, error);
-                had_error.store(true, Ordering::Relaxed);
+                match result {
+                    Ok(ip) => return Ok(ip),
+                    Err(e @ Error::Cancelled) => return Err(e),
+                    Err(error) => {
+                        warn!("Failed to get IP with method {:?}; {}", m, error);
+                        had_error.store(true, Ordering::Relaxed);
+                    }
+                }
             }
 
             info!("Setting all failed IP methods to try again");
@@ -268,7 +318,10 @@ impl IpMethods {
             );
 
             retries += 1;
-            thread::sleep(d);
+            tokio::select! {
+                _ = cancel.cancelled() => return Err(Error::Cancelled),
+                _ = sleep(d) => {}
+            }
         }
     }
 }
@@ -278,6 +331,7 @@ mod test {
     use super::IpMethods;
     use crate::NotificationLogger;
     use std::sync::atomic::Ordering;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn ipmethods_fromstr_for_one() {
@@ -332,24 +386,42 @@ mod test {
         assert!(x.is_err());
     }
 
-    #[test]
-    fn ipmethods_failed_methods_are_skipped() {
+    #[tokio::test]
+    async fn ipmethods_failed_methods_are_skipped() {
         // IpMethod::Fail panics if try_get is called twice
         let x = "fail,static:169.254.1.1"
             .parse::<IpMethods>()
             .expect("ip methods");
-        let _ = x.get(std::time::Duration::from_secs(1), NotificationLogger);
+        let client = reqwest::Client::new();
+        let cancel = CancellationToken::new();
+        let _ = x
+            .get(
+                std::time::Duration::from_secs(1),
+                NotificationLogger,
+                &client,
+                &cancel,
+            )
+            .await;
         assert!(x.methods[0].1.load(Ordering::Relaxed));
         //dbg!(x);
         //assert!(false);
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn ipmethods_failed_methods_reset_on_all_failed() {
+    async fn ipmethods_failed_methods_reset_on_all_failed() {
         let x = "fail,fail".parse::<IpMethods>().expect("ip methods");
         // We expect this to panic because failed methods should be retried if all fail and Fail
         // always panic's on a second call.
-        x.get(std::time::Duration::from_secs(1), NotificationLogger);
+        let client = reqwest::Client::new();
+        let cancel = CancellationToken::new();
+        let _ = x
+            .get(
+                std::time::Duration::from_secs(1),
+                NotificationLogger,
+                &client,
+                &cancel,
+            )
+            .await;
     }
 }

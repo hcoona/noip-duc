@@ -1,6 +1,7 @@
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
+
+use async_trait::async_trait;
+use tokio::time::sleep;
 
 pub enum Control {
     UpdateNow,
@@ -8,21 +9,27 @@ pub enum Control {
     Quit,
 }
 
+#[async_trait]
 pub trait Controller {
-    fn recv_timeout(&self, timeout: Duration) -> Option<Control>;
+    async fn recv_timeout(&mut self, timeout: Duration) -> Option<Control>;
 }
 
 pub struct SleepOnlyController;
 
+#[async_trait]
 impl Controller for SleepOnlyController {
-    fn recv_timeout(&self, timeout: Duration) -> Option<Control> {
-        thread::sleep(timeout);
+    async fn recv_timeout(&mut self, timeout: Duration) -> Option<Control> {
+        sleep(timeout).await;
         Some(Control::UpdateNow)
     }
 }
 
-impl Controller for mpsc::Receiver<Control> {
-    fn recv_timeout(&self, timeout: Duration) -> Option<Control> {
-        self.recv_timeout(timeout).ok()
+#[async_trait]
+impl Controller for tokio::sync::mpsc::Receiver<Control> {
+    async fn recv_timeout(&mut self, timeout: Duration) -> Option<Control> {
+        tokio::select! {
+            ctrl = self.recv() => ctrl,
+            _ = sleep(timeout) => Some(Control::UpdateNow),
+        }
     }
 }

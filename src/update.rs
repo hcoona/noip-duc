@@ -71,12 +71,13 @@ impl UpdateError {
     }
 }
 
-pub fn update(
+pub async fn update(
     username: &str,
     password: &str,
     hostnames: Option<&Vec<String>>,
     ip: IpAddr,
     timeout: Duration,
+    client: &reqwest::Client,
 ) -> UpdateResult {
     let url = match hostnames {
         Some(h) => format!(
@@ -94,34 +95,35 @@ pub fn update(
 
     debug!("Updating with url {}", url);
 
-    let r = minreq::get(url)
-        .with_header("user-agent", crate::USER_AGENT)
-        .with_header(
+    let r = client
+        .get(url)
+        .header("user-agent", crate::USER_AGENT)
+        .header(
             "Authorization",
             format!(
                 "Basic {}",
                 base64_encode(format!("{}:{}", encode_username(username), password))
             ),
         )
-        .with_timeout(timeout.as_secs())
+        .timeout(timeout)
         .send()
+        .await
         .map_err(|e| UpdateError::Connection(format!("{}", e)))?;
 
     debug!("{:?}", r);
 
+    let status = r.status();
+    let reason = status.canonical_reason().unwrap_or("").to_string();
+
     let body = r
-        .as_str()
+        .text()
+        .await
         .map_err(|e| UpdateError::Unknown(format!("{}", e)))?;
 
-    match r.status_code {
-        200 => {}
-        401 => return Err(UpdateError::BadAuth),
-        _ => {
-            return Err(UpdateError::StatusCode(
-                r.status_code,
-                r.reason_phrase.clone(),
-            ))
-        }
+    match status {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::UNAUTHORIZED => return Err(UpdateError::BadAuth),
+        _ => return Err(UpdateError::StatusCode(status.as_u16() as i32, reason)),
     }
 
     match body.trim_end() {

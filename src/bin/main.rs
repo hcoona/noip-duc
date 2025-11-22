@@ -6,6 +6,7 @@ use clap::Parser;
 use log::debug;
 
 use noip_duc::{noip2, public_ip::IpMethods, updater, NotificationLogger, SleepOnlyController};
+use tokio_util::sync::CancellationToken;
 
 // This is used to handle --import since `exclusive`/`conflicts_with` don't work for this split-parse
 // pattern. We parse a minimal CLI first to allow --import without requiring username/password.
@@ -231,7 +232,8 @@ fn is_rr_label(s: &str) -> bool {
         && s.chars().next().is_some_and(|c| c != '-')
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // Handle --import first to avoid required --username and --password
     if let Ok(c) = PreConfig::try_parse() {
         let imported = noip2::import(&c.import)?;
@@ -263,12 +265,42 @@ fn main() -> anyhow::Result<()> {
 
     debug!("{:?}", config);
 
-    updater(
+    let cancel = CancellationToken::new();
+
+    // Ctrl+C handler
+    {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                log::info!("Ctrl+C received, cancelling...");
+                cancel.cancel();
+            }
+        });
+    }
+
+    let mut updater_fut = Box::pin(updater(
         (&config).into(),
         NotificationLogger {},
         SleepOnlyController {},
-    )
-    .map_err(Into::into)
+        cancel.clone(),
+    ));
+
+    let cancel_fut = cancel.cancelled();
+    tokio::pin!(cancel_fut);
+
+    tokio::select! {
+        res = &mut updater_fut => res.map_err(Into::into),
+        _ = &mut cancel_fut => {
+            // wait up to 3s for graceful shutdown
+            match tokio::time::timeout(Duration::from_secs(3), &mut updater_fut).await {
+                Ok(res) => res.map_err(Into::into),
+                Err(_) => {
+                    log::error!("Shutdown timed out after 3s; forcing exit");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_family = "unix")]

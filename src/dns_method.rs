@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 use std::fmt;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::proto::rr::rdata::txt::TXT;
-use hickory_resolver::Resolver;
+use hickory_resolver::TokioAsyncResolver as Resolver;
 use log::debug;
 
 const IPCAST1: &str = "ipcast1.dynupdate.no-ip.com:8253";
@@ -38,8 +38,9 @@ pub enum Error {
     CreateResolver(String),
 }
 
-pub fn resolve(name: &str) -> Result<SocketAddr, Error> {
-    name.to_socket_addrs()
+pub async fn resolve(name: &str) -> Result<SocketAddr, Error> {
+    tokio::net::lookup_host(name)
+        .await
         .map_err(|e| Error::SystemResolve(name.to_owned(), format!("{e}").into()))?
         .next()
         .ok_or_else(|| Error::SystemResolve(name.to_owned(), "no addresses".into()))
@@ -113,38 +114,50 @@ impl DnsMethod {
         })
     }
 
-    pub fn get_ip(&self) -> Result<IpAddr, Error> {
+    pub async fn get_ip(&self) -> Result<IpAddr, Error> {
         match self.record_type {
-            RecordType::A => self.get_ip_a(),
-            RecordType::AAAA => self.get_ip_aaaa(),
-            RecordType::TXT => self.get_ip_txt(),
+            RecordType::A => self.get_ip_a().await,
+            RecordType::AAAA => self.get_ip_aaaa().await,
+            RecordType::TXT => self.get_ip_txt().await,
         }
     }
 
-    fn get_ip_a(&self) -> Result<IpAddr, Error> {
-        let response = self.get_resolver()?.ipv4_lookup(self.qname.as_str())?;
+    async fn get_ip_a(&self) -> Result<IpAddr, Error> {
+        let response = self
+            .get_resolver()
+            .await?
+            .ipv4_lookup(self.qname.as_str())
+            .await?;
         Ok(IpAddr::V4(
             response.iter().next().ok_or(Error::NoDnsAnswers)?.0,
         ))
     }
 
-    fn get_ip_aaaa(&self) -> Result<IpAddr, Error> {
-        let response = self.get_resolver()?.ipv6_lookup(self.qname.as_str())?;
+    async fn get_ip_aaaa(&self) -> Result<IpAddr, Error> {
+        let response = self
+            .get_resolver()
+            .await?
+            .ipv6_lookup(self.qname.as_str())
+            .await?;
         Ok(IpAddr::V6(
             response.iter().next().ok_or(Error::NoDnsAnswers)?.0,
         ))
     }
 
-    fn get_ip_txt(&self) -> Result<IpAddr, Error> {
-        let response = self.get_resolver()?.txt_lookup(self.qname.as_str())?;
+    async fn get_ip_txt(&self) -> Result<IpAddr, Error> {
+        let response = self
+            .get_resolver()
+            .await?
+            .txt_lookup(self.qname.as_str())
+            .await?;
         response
             .iter()
             .find_map(parse_txt)
             .ok_or(Error::NoIpInTxtAnswers)
     }
 
-    fn get_resolver(&self) -> Result<Resolver, Error> {
-        self.resolver.build()
+    async fn get_resolver(&self) -> Result<Resolver, Error> {
+        self.resolver.build().await
     }
 }
 
@@ -173,12 +186,14 @@ impl ResolverFactory {
         Self { nameservers, opts }
     }
 
-    fn build(&self) -> Result<Resolver, Error> {
+    async fn build(&self) -> Result<Resolver, Error> {
         let mut config = ResolverConfig::new();
 
         for ns in &self.nameservers {
             config.add_name_server(NameServerConfig {
-                socket_addr: resolve(ns.as_ref()).map_err(|_| Error::NsLookup(ns.clone()))?,
+                socket_addr: resolve(ns.as_ref())
+                    .await
+                    .map_err(|_| Error::NsLookup(ns.clone()))?,
                 protocol: Protocol::Udp,
                 tls_dns_name: None,
                 trust_negative_responses: true,
@@ -186,7 +201,7 @@ impl ResolverFactory {
             })
         }
 
-        Resolver::new(config, self.opts.clone()).map_err(|e| Error::CreateResolver(format!("{e}")))
+        Ok(Resolver::tokio(config, self.opts.clone()))
     }
 
     fn for_ipcast() -> Result<Self, Error> {
