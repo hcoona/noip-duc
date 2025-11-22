@@ -1,0 +1,201 @@
+name: Buddy GHCR Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  push-ghcr-images:
+    name: Push ${{ matrix.variant }} image to GHCR
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: azurelinux
+            dockerfile: docker/azurelinux/Dockerfile
+            description: Azure Linux distroless runtime
+          - variant: debian
+            dockerfile: docker/debian/Dockerfile
+            description: Debian bookworm slim runtime
+    env:
+      REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+        with:
+          cosign-release: 'v3.0.2'
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version metadata
+        id: versions
+        run: |
+          set -euo pipefail
+          crate_version="$(awk 'match($0,/^version\s*=\s*"([^"]+)"/,m){print m[1]; exit}' Cargo.toml)"
+          if [[ -z "$crate_version" ]]; then
+            echo "Unable to parse crate version from Cargo.toml" >&2
+            exit 1
+          fi
+          dockerfile="${{ matrix.dockerfile }}"
+          rust_version="$(grep -m1 '^ARG RUST_VERSION=' "$dockerfile" | cut -d= -f2 | tr -d '"')"
+          rust_version="${rust_version//$'\r'/}";
+          if [[ -z "$rust_version" ]]; then
+            echo "Unable to determine RUST_VERSION from $dockerfile" >&2
+            exit 1
+          fi
+          case "${{ matrix.variant }}" in
+            azurelinux)
+              os_version="$(grep -m1 '^FROM mcr\.microsoft\.com/azurelinux/distroless/base:' "$dockerfile" | sed -E 's/.*base:([[:alnum:].-]+).*/\1/')"
+              os_version="${os_version//$'\r'/}"
+              if [[ -z "$os_version" ]]; then
+                os_version="3.0"
+              fi
+              os_tag="azurelinux${os_version}"
+              ;;
+            debian)
+              os_version="$(grep -m1 '^ARG DEBIAN_VERSION=' "$dockerfile" | cut -d= -f2 | tr -d '"')"
+              os_version="${os_version//$'\r'/}"
+              if [[ -z "$os_version" ]]; then
+                echo "Unable to determine DEBIAN_VERSION from $dockerfile" >&2
+                exit 1
+              fi
+              os_tag="debian-${os_version}"
+              ;;
+            *)
+              echo "Unsupported variant ${{ matrix.variant }}" >&2
+              exit 1
+              ;;
+          esac
+          tag="${crate_version}-rust${rust_version}-${os_tag}"
+          patched_tag="${tag}"
+          {
+            echo "crate_version=${crate_version}"
+            echo "rust_version=${rust_version}"
+            echo "os_tag=${os_tag}"
+            echo "tag=${tag}"
+            echo "patched_tag=${patched_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ steps.versions.outputs.tag }}
+          labels: |
+            org.opencontainers.image.description=${{ matrix.description }} image for ${{ github.repository }}
+
+      - name: Build ${{ matrix.variant }} image (digest only)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          sbom: true
+          provenance: mode=max
+          outputs: type=registry,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true
+
+      - name: Scan image for OS vulnerabilities (Trivy)
+        id: trivy
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+          format: json
+          output: trivy-${{ matrix.variant }}.json
+          ignore-unfixed: true
+          vuln-type: os
+
+      - name: Count fixable OS vulnerabilities
+        id: vuln_count
+        run: |
+          report="trivy-${{ matrix.variant }}.json"
+          count=$(jq 'if .Results then [.Results[] | select(.Class=="os-pkgs" and .Vulnerabilities!=null) | .Vulnerabilities[] | select(.FixedVersion!=null and .FixedVersion!="")] | length else 0 end' "$report")
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch image with Copacetic
+        if: steps.vuln_count.outputs.count != '0'
+        id: copa
+        uses: project-copacetic/copa-action@v1.2.1
+        with:
+          image: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+          image-report: trivy-${{ matrix.variant }}.json
+          patched-tag: ${{ steps.versions.outputs.patched_tag }}
+          timeout: 10m
+          output: copa-${{ matrix.variant }}.json
+
+      - name: Push Copacetic patched image
+        if: steps.copa.outcome == 'success'
+        run: docker push ${{ env.REGISTRY_IMAGE }}:${{ steps.versions.outputs.patched_tag }}
+
+      - name: Resolve patched image digest
+        if: steps.copa.outcome == 'success'
+        id: patched_digest
+        env:
+          PATCHED_REF: ${{ env.REGISTRY_IMAGE }}:${{ steps.versions.outputs.patched_tag }}
+        run: |
+          ref=$(cosign triangulate "${PATCHED_REF}")
+          digest="${ref##*@}"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote digest to release tag
+        if: steps.vuln_count.outputs.count == '0'
+        env:
+          RELEASE_REF: ${{ env.REGISTRY_IMAGE }}:${{ steps.versions.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools create --tag "${RELEASE_REF}" "${REGISTRY_IMAGE}@${IMAGE_DIGEST}"
+
+      - name: Sign GHCR image with Cosign
+        if: steps.vuln_count.outputs.count == '0'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${REGISTRY_IMAGE}@${IMAGE_DIGEST}"
+
+      - name: Sign patched GHCR image with Cosign
+        if: steps.copa.outcome == 'success'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "${{ steps.patched_digest.outputs.ref }}"
+
+      - name: Generate artifact attestation (${{ matrix.variant }})
+        if: steps.vuln_count.outputs.count == '0'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate artifact attestation for Copacetic image (${{ matrix.variant }})
+        if: steps.copa.outcome == 'success'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.patched_digest.outputs.digest }}
+          push-to-registry: true

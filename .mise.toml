@@ -1,4 +1,5 @@
 [tools]
+actionlint = "latest"
 cargo-binstall = "latest"
 hadolint = "latest"
 rust = "stable"
