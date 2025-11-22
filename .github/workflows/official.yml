@@ -90,7 +90,7 @@ jobs:
           fi
           case "${{ matrix.variant }}" in
             azurelinux)
-              os_version="$(grep -m1 '^FROM mcr\.microsoft\.com/azurelinux/distroless/base:' "$dockerfile" | sed -E 's/.*base:([[:alnum.].-]+).*/\1/')"
+              os_version="$(grep -m1 '^FROM mcr\.microsoft\.com/azurelinux/distroless/base:' "$dockerfile" | sed -E 's/.*base:([[:alnum:].-]+).*/\1/')"
               os_version="${os_version//$'\r'/}"
               if [[ -z "$os_version" ]]; then
                 os_version="3.0"
