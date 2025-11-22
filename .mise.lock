@@ -2,6 +2,10 @@
 version = "1.14.4"
 backend = "aqua:cargo-bins/cargo-binstall"
 
+[[tools.hadolint]]
+version = "2.12.0"
+backend = "ubi:hadolint/hadolint"
+
 [[tools.rust]]
 version = "stable"
 backend = "core:rust"
