@@ -59,7 +59,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.20.10
+        uses: anchore/sbom-action/download-syft@v0.20.11
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.0.0
