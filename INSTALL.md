@@ -65,7 +65,7 @@ Configuration may be done with command line options or environment variables. En
 Here is an example configuration file. It contains a password, so set permissions appropriately, ideally `0600`. See `noip-duc --help` for a full explanation of each option.
 
 ```
-## /etc/defaults/noip-duc (Debian) or /etc/sysconfig/noip-duc (RedHat, Suse)
+## /etc/default/noip-duc (Debian) or /etc/sysconfig/noip-duc (RedHat, Suse)
 ## or anywhere you like.
 NOIP_USERNAME=
 NOIP_PASSWORD=
