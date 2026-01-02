@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "noip-duc"
-version = "3.4.0-hcoona.1"
+version = "3.4.0-hcoona.2"
 dependencies = [
  "anyhow",
  "async-trait",

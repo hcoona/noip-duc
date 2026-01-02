@@ -1,6 +1,6 @@
 [package]
 name = "noip-duc"
-version = "3.4.0-hcoona.1"
+version = "3.4.0-hcoona.2"
 authors = ["No-IP Team <support@noip.com>"]
 description = "No-IP Dynamic Update Client (https://www.noip.com)"
 license = "Apache-2.0"
