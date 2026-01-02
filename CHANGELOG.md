@@ -2,11 +2,26 @@
 
 ## [Unreleased]
 
+- Fix: Fix typo in installation instructions
+- Change: Update dependencies (`reqwest`, `clap`, `log`)
+- Change: Update GitHub Actions (`actions/checkout`, `anchore/sbom-action`)
+
+## [3.4.0-hcoona.1] - 2025-11-22
+
+- New: Add GitHub Actions workflows for CI, CodeQL, and Docker image publishing
+- New: Add Dependabot configuration (grouped updates)
+- Change: Introduce Mise toolchain configuration (including `cargo-deny` and `hadolint`)
 - Change: Upgrade `clap` to 4.5.52 and adapt CLI parser
 - Change: Make `IpMethods` Clone + Send + Sync (use `AtomicBool`)
 - Change: Move the updater, DNS/public IP lookups, and controllers onto the async `tokio` runtime with cancellation handling (Ctrl+C, graceful shutdown, exec_on_change cleanup)
 - Change: Replace `minreq` with a shared `reqwest` client (HTTP/2, rustls) for public IP detection and hostname updates
 - Change: Allow the `CDLA-Permissive-2.0` license in `cargo-deny`
+- Fix: Fix official build workflow for Azure Linux 3.0
+
+## [3.3.0+hcoona.2] - 2025-09-05
+
+- New: Add Dockerfiles for Debian and Azure Linux 3 (plus `.dockerignore`)
+- Security: Upgrade dependencies and bump version
 
 ## [3.3.0] - 2024-09-16
 
